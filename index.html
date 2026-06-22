@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cabel hub</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #101218; }
+    iframe { border: 0; width: 100%; height: 100%; display: block; }
+  </style>
+</head>
+<body>
+  <!-- Embedding the Apps Script web app in an iframe hides Google's
+       "This application was created by a Google Apps Script user" banner. -->
+  <iframe id="app" allow="clipboard-read; clipboard-write"></iframe>
+  <script>
+    // 1) Paste your deployed web-app /exec URL between the quotes below.
+    var EXEC = 'https://script.google.com/macros/s/AKfycbz6bjkFXkNoUoTFnlZVAhUz2Qtq37lStsiqifqKP0KAerz3Rgia3ZkfaEteT3yimqA4pw/exec';
+
+    // Pass any query string through to the app, so wrapper.html?client=acme
+    // loads the acme workspace. (Open the bare wrapper for the default client.)
+    var qs = window.location.search || '';
+    document.getElementById('app').src = EXEC + qs;
+
+    try {
+      var client = new URLSearchParams(qs).get('client');
+      document.title = (client || 'cabel') + ' hub';
+    } catch (e) { /* ignore */ }
+  </script>
+</body>
+</html>
