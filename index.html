@@ -22,6 +22,9 @@
     // We only ever frame Google Apps Script /exec pages — guards the ?app= param and
     // posted URLs against being pointed at an arbitrary site.
     function isTrustedExec(u) { return /^https:\/\/script\.google\.com\//.test(String(u)); }
+    // A bare client/app key (registry-safe charset) — distinguishes the tidy ?app=nexus
+    // form from a legacy full /exec URL stored in ?app=.
+    function isKey(s) { return /^[a-z0-9_-]+$/i.test(String(s || '')); }
     // Messages can only come from the Apps Script container (script.google.com) or the
     // sandbox that runs our HTML (any *.googleusercontent.com host — its subdomain shape
     // varies, so match by suffix rather than a fixed number of labels).
@@ -37,16 +40,22 @@
     }
 
     // On load, decide what to frame:
-    //   • ?app=<exec> present  → a refresh / deep-link into a previously-opened sub-app.
-    //     Re-frame that sub-app; it restores its own session from localStorage, so no
-    //     #session hand-off is needed here. (Recorded by the message handler below.)
-    //   • otherwise            → the Hub launcher. Pass through any ?client= and add
-    //     wrapped=1 so the Hub hands off via postMessage instead of navigating the tab.
+    //   • ?app=<key> (tidy form) → a refresh / deep-link into a sub-app. We don't know the
+    //     app's /exec URL (only the registry does), so load the Hub with ?app=<key> and let
+    //     it resolve the app from the catalog and open it (it re-records this same URL).
+    //   • ?app=<exec> (legacy full URL) → re-frame that sub-app directly.
+    //   • otherwise → the Hub launcher. Pass through any ?client= and add wrapped=1 so the
+    //     Hub hands off via postMessage instead of navigating the tab.
     var params = new URLSearchParams(window.location.search || '');
     var app = params.get('app');
+    var client = params.get('client');
     if (app && isTrustedExec(app)) {
       appEl.src = app;
       clientTitle(app.split('?')[1] || '');
+    } else if (app && isKey(app)) {
+      appEl.src = EXEC + '?' + (isKey(client) ? 'client=' + encodeURIComponent(client) + '&' : '') +
+                  'app=' + encodeURIComponent(app) + '&wrapped=1';
+      clientTitle(isKey(client) ? 'client=' + client : '');
     } else {
       var qs = window.location.search || '';
       appEl.src = EXEC + qs + (qs ? '&' : '?') + 'wrapped=1';
@@ -64,15 +73,22 @@
       var d = e.data;
       if (!d || typeof d !== 'object') return;
 
-      // Tile click → frame the sub-app (with its #session hand-off) and record it as
-      // ?app=… (minus the session fragment) so a refresh reloads the sub-app.
+      // Tile click → frame the sub-app (with its #session hand-off), then record a tidy
+      // ?client=<key>&app=<key> URL so a refresh restores it (resolved via the Hub above).
+      // Fall back to storing the full /exec URL if the Hub didn't send keys (older Hub).
       if (d.type === 'cabel-hub-navigate' && typeof d.url === 'string' && isTrustedExec(d.url)) {
         appEl.src = d.url;
-        var clean = d.url.split('#')[0]; // drop #session= before it touches our URL/history
+        var search;
+        if (isKey(d.appKey)) {
+          search = '?' + (isKey(d.clientKey) ? 'client=' + encodeURIComponent(d.clientKey) + '&' : '') +
+                   'app=' + encodeURIComponent(d.appKey);
+        } else {
+          search = '?app=' + encodeURIComponent(d.url.split('#')[0]); // drop #session=
+        }
         try {
-          history.replaceState(null, '', window.location.pathname + '?app=' + encodeURIComponent(clean));
+          history.replaceState(null, '', window.location.pathname + search);
         } catch (err) { /* non-fatal: refresh just falls back to the Hub */ }
-        clientTitle(clean.split('?')[1] || '');
+        clientTitle(search.slice(1));
         return;
       }
 
