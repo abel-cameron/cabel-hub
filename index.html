@@ -22,6 +22,13 @@
     // We only ever frame Google Apps Script /exec pages — guards the ?app= param and
     // posted URLs against being pointed at an arbitrary site.
     function isTrustedExec(u) { return /^https:\/\/script\.google\.com\//.test(String(u)); }
+    // Messages can only come from the Apps Script container (script.google.com) or the
+    // sandbox that runs our HTML (any *.googleusercontent.com host — its subdomain shape
+    // varies, so match by suffix rather than a fixed number of labels).
+    function trustedOrigin(o) {
+      return o === 'https://script.google.com' ||
+             /^https:\/\/[a-z0-9.-]+\.googleusercontent\.com$/i.test(String(o));
+    }
     function clientTitle(search) {
       try {
         var c = new URLSearchParams(search || '').get('client');
@@ -53,18 +60,37 @@
     // minus the session fragment — so a refresh reloads the sub-app, not the Hub.
     // Only honour messages from Google's own origins, our message type, and exec URLs.
     window.addEventListener('message', function (e) {
-      var ok = /^https:\/\/script\.google\.com$/.test(e.origin) ||
-               /^https:\/\/[^.]+\.googleusercontent\.com$/.test(e.origin);
-      if (!ok) return;
+      if (!trustedOrigin(e.origin)) return;
       var d = e.data;
-      if (!d || d.type !== 'cabel-hub-navigate' || typeof d.url !== 'string') return;
-      if (!isTrustedExec(d.url)) return;
-      appEl.src = d.url;
-      var clean = d.url.split('#')[0]; // drop #session= before it touches our URL/history
-      try {
-        history.replaceState(null, '', window.location.pathname + '?app=' + encodeURIComponent(clean));
-      } catch (err) { /* non-fatal: refresh just falls back to the Hub */ }
-      clientTitle(clean.split('?')[1] || '');
+      if (!d || typeof d !== 'object') return;
+
+      // Tile click → frame the sub-app (with its #session hand-off) and record it as
+      // ?app=… (minus the session fragment) so a refresh reloads the sub-app.
+      if (d.type === 'cabel-hub-navigate' && typeof d.url === 'string' && isTrustedExec(d.url)) {
+        appEl.src = d.url;
+        var clean = d.url.split('#')[0]; // drop #session= before it touches our URL/history
+        try {
+          history.replaceState(null, '', window.location.pathname + '?app=' + encodeURIComponent(clean));
+        } catch (err) { /* non-fatal: refresh just falls back to the Hub */ }
+        clientTitle(clean.split('?')[1] || '');
+        return;
+      }
+
+      // Workspace picked → reload the Hub scoped to that client, and record it as
+      // ?client=… so the Hub stays wrapped and a refresh keeps the chosen workspace.
+      if (d.type === 'cabel-hub-client' && typeof d.clientKey === 'string' && /^[a-z0-9_-]+$/i.test(d.clientKey)) {
+        appEl.src = EXEC + '?client=' + encodeURIComponent(d.clientKey) + '&wrapped=1';
+        try {
+          history.replaceState(null, '', window.location.pathname + '?client=' + encodeURIComponent(d.clientKey));
+        } catch (err) { /* non-fatal */ }
+        clientTitle('client=' + d.clientKey);
+        return;
+      }
+
+      // Trusted origin but no handler matched — surfaces payload/type mismatches in devtools.
+      if (d.type === 'cabel-hub-navigate' || d.type === 'cabel-hub-client') {
+        console.warn('[wrapper] ignored ' + d.type + ' message:', d);
+      }
     });
   </script>
 </body>
