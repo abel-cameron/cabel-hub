@@ -17,32 +17,54 @@
     // 1) Paste your deployed web-app /exec URL between the quotes below.
     var EXEC = 'https://script.google.com/macros/s/AKfycby9wCN3CgXO1wK_wsJUyWCvsez7d2AWnI8euQSht2XuIcEttRYpHS5QbaPjRO7xlG3U/exec';
 
-    // Pass any query string through to the app, so wrapper.html?client=acme
-    // loads the acme workspace. (Open the bare wrapper for the default client.)
-    // Add wrapped=1 so the Hub knows it's running inside this wrapper and hands
-    // off to sub-apps by swapping THIS iframe (below) instead of navigating the
-    // whole tab — which would replace (and un-wrap) the page.
-    var qs = window.location.search || '';
-    var sep = qs ? '&' : '?';
-    document.getElementById('app').src = EXEC + qs + sep + 'wrapped=1';
+    var appEl = document.getElementById('app');
 
-    try {
-      var client = new URLSearchParams(qs).get('client');
-      document.title = (client || 'cabel') + ' hub';
-    } catch (e) { /* ignore */ }
+    // We only ever frame Google Apps Script /exec pages — guards the ?app= param and
+    // posted URLs against being pointed at an arbitrary site.
+    function isTrustedExec(u) { return /^https:\/\/script\.google\.com\//.test(String(u)); }
+    function clientTitle(search) {
+      try {
+        var c = new URLSearchParams(search || '').get('client');
+        document.title = (c || 'cabel') + ' hub';
+      } catch (e) { /* ignore */ }
+    }
 
-    // The Hub (and any sub-app) lives a couple of frames deep inside Apps Script's
-    // googleusercontent.com sandbox. When a tile is clicked it posts the target
-    // /exec URL up to this top window; we swap the iframe so the sub-app stays
-    // wrapped (Google's banner hidden) and the session hand-off in the URL fragment
-    // still reaches it. Only honour messages from Google's own origins + our type.
+    // On load, decide what to frame:
+    //   • ?app=<exec> present  → a refresh / deep-link into a previously-opened sub-app.
+    //     Re-frame that sub-app; it restores its own session from localStorage, so no
+    //     #session hand-off is needed here. (Recorded by the message handler below.)
+    //   • otherwise            → the Hub launcher. Pass through any ?client= and add
+    //     wrapped=1 so the Hub hands off via postMessage instead of navigating the tab.
+    var params = new URLSearchParams(window.location.search || '');
+    var app = params.get('app');
+    if (app && isTrustedExec(app)) {
+      appEl.src = app;
+      clientTitle(app.split('?')[1] || '');
+    } else {
+      var qs = window.location.search || '';
+      appEl.src = EXEC + qs + (qs ? '&' : '?') + 'wrapped=1';
+      clientTitle(qs);
+    }
+
+    // The Hub lives a couple of frames deep inside Apps Script's googleusercontent.com
+    // sandbox. When a tile is clicked it posts the target /exec URL (with the #session
+    // hand-off fragment) up to this top window. We swap the iframe so the sub-app stays
+    // wrapped (Google's banner hidden), and record it in our address bar as ?app=… —
+    // minus the session fragment — so a refresh reloads the sub-app, not the Hub.
+    // Only honour messages from Google's own origins, our message type, and exec URLs.
     window.addEventListener('message', function (e) {
       var ok = /^https:\/\/script\.google\.com$/.test(e.origin) ||
                /^https:\/\/[^.]+\.googleusercontent\.com$/.test(e.origin);
       if (!ok) return;
       var d = e.data;
       if (!d || d.type !== 'cabel-hub-navigate' || typeof d.url !== 'string') return;
-      document.getElementById('app').src = d.url;
+      if (!isTrustedExec(d.url)) return;
+      appEl.src = d.url;
+      var clean = d.url.split('#')[0]; // drop #session= before it touches our URL/history
+      try {
+        history.replaceState(null, '', window.location.pathname + '?app=' + encodeURIComponent(clean));
+      } catch (err) { /* non-fatal: refresh just falls back to the Hub */ }
+      clientTitle(clean.split('?')[1] || '');
     });
   </script>
 </body>
