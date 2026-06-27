@@ -19,13 +19,31 @@
 
     // Pass any query string through to the app, so wrapper.html?client=acme
     // loads the acme workspace. (Open the bare wrapper for the default client.)
+    // Add wrapped=1 so the Hub knows it's running inside this wrapper and hands
+    // off to sub-apps by swapping THIS iframe (below) instead of navigating the
+    // whole tab — which would replace (and un-wrap) the page.
     var qs = window.location.search || '';
-    document.getElementById('app').src = EXEC + qs;
+    var sep = qs ? '&' : '?';
+    document.getElementById('app').src = EXEC + qs + sep + 'wrapped=1';
 
     try {
       var client = new URLSearchParams(qs).get('client');
       document.title = (client || 'cabel') + ' hub';
     } catch (e) { /* ignore */ }
+
+    // The Hub (and any sub-app) lives a couple of frames deep inside Apps Script's
+    // googleusercontent.com sandbox. When a tile is clicked it posts the target
+    // /exec URL up to this top window; we swap the iframe so the sub-app stays
+    // wrapped (Google's banner hidden) and the session hand-off in the URL fragment
+    // still reaches it. Only honour messages from Google's own origins + our type.
+    window.addEventListener('message', function (e) {
+      var ok = /^https:\/\/script\.google\.com$/.test(e.origin) ||
+               /^https:\/\/[^.]+\.googleusercontent\.com$/.test(e.origin);
+      if (!ok) return;
+      var d = e.data;
+      if (!d || d.type !== 'cabel-hub-navigate' || typeof d.url !== 'string') return;
+      document.getElementById('app').src = d.url;
+    });
   </script>
 </body>
 </html>
