@@ -25,6 +25,15 @@
     // A bare client/app key (registry-safe charset) — distinguishes the tidy ?app=nexus
     // form from a legacy full /exec URL stored in ?app=.
     function isKey(s) { return /^[a-z0-9_-]+$/i.test(String(s || '')); }
+    // Append wrapped=1 to an exec URL (before any #session fragment) so the sub-app knows
+    // it's running inside this wrapper and can show a "Back to Hub" control.
+    function withWrapped(u) {
+      u = String(u);
+      var hash = '', base = u, h = u.indexOf('#');
+      if (h !== -1) { hash = u.slice(h); base = u.slice(0, h); }
+      base += (base.indexOf('?') === -1 ? '?' : '&') + 'wrapped=1';
+      return base + hash;
+    }
     // Messages can only come from the Apps Script container (script.google.com) or the
     // sandbox that runs our HTML (any *.googleusercontent.com host — its subdomain shape
     // varies, so match by suffix rather than a fixed number of labels).
@@ -50,7 +59,7 @@
     var app = params.get('app');
     var client = params.get('client');
     if (app && isTrustedExec(app)) {
-      appEl.src = app;
+      appEl.src = withWrapped(app);
       clientTitle(app.split('?')[1] || '');
     } else if (app && isKey(app)) {
       appEl.src = EXEC + '?' + (isKey(client) ? 'client=' + encodeURIComponent(client) + '&' : '') +
@@ -77,7 +86,7 @@
       // ?client=<key>&app=<key> URL so a refresh restores it (resolved via the Hub above).
       // Fall back to storing the full /exec URL if the Hub didn't send keys (older Hub).
       if (d.type === 'cabel-hub-navigate' && typeof d.url === 'string' && isTrustedExec(d.url)) {
-        appEl.src = d.url;
+        appEl.src = withWrapped(d.url);
         var search;
         if (isKey(d.appKey)) {
           search = '?' + (isKey(d.clientKey) ? 'client=' + encodeURIComponent(d.clientKey) + '&' : '') +
@@ -103,8 +112,21 @@
         return;
       }
 
+      // "Back to Hub" from inside a sub-app → reload the Hub for the current client and
+      // record ?client=… (drops ?app=) so a refresh stays on the Hub.
+      if (d.type === 'cabel-hub-home') {
+        var cur = new URLSearchParams(window.location.search || '').get('client');
+        var ck = isKey(d.clientKey) ? d.clientKey : (isKey(cur) ? cur : '');
+        appEl.src = EXEC + (ck ? '?client=' + encodeURIComponent(ck) + '&wrapped=1' : '?wrapped=1');
+        try {
+          history.replaceState(null, '', window.location.pathname + (ck ? '?client=' + encodeURIComponent(ck) : ''));
+        } catch (err) { /* non-fatal */ }
+        clientTitle(ck ? 'client=' + ck : '');
+        return;
+      }
+
       // Trusted origin but no handler matched — surfaces payload/type mismatches in devtools.
-      if (d.type === 'cabel-hub-navigate' || d.type === 'cabel-hub-client') {
+      if (d.type === 'cabel-hub-navigate' || d.type === 'cabel-hub-client' || d.type === 'cabel-hub-home') {
         console.warn('[wrapper] ignored ' + d.type + ' message:', d);
       }
     });
